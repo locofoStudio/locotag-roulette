@@ -459,41 +459,59 @@
       return doc(db, 'userVenueProgress', `${userId}-${venueId}`);
     }
     
-    // Initialize authentication - use URL uid if provided, otherwise anonymous
+    // Initialize authentication - use URL uid if provided, otherwise wait for auth state
     async function initializeAuth() {
       try {
-        console.log('initializeAuth called, urlUserId:', urlUserId);
+        console.log('=== AUTH INITIALIZATION ===');
+        console.log('URL userId:', urlUserId);
         
-        // Check if user is already authenticated (from main app)
-        const currentUser = auth.currentUser;
-        console.log('Current Firebase Auth user:', currentUser ? currentUser.uid : 'null');
-        
-        // If user ID is provided in URL, use it (authenticated user from main app)
+        // Priority 1: If URL has uid, use it immediately (no need to wait for auth state)
         if (urlUserId) {
           currentUserId = urlUserId;
           console.log('✓ Using authenticated user ID from URL:', currentUserId);
-          
-          // If Firebase Auth already has this user, great
-          if (currentUser && currentUser.uid === urlUserId) {
-            console.log('User already authenticated in Firebase Auth');
-          } else {
-            console.log('Using user ID from URL (user authenticated in main app, not in this Firebase instance)');
-          }
-          
-          return currentUserId;
-        } else if (currentUser) {
-          // No URL uid, but user is already authenticated
-          currentUserId = currentUser.uid;
-          console.log('Using existing authenticated user:', currentUserId);
-          return currentUserId;
-        } else {
-          // No user ID in URL and no existing auth, sign in anonymously
-          console.log('No user ID in URL and no existing auth, signing in anonymously...');
-          const userCredential = await signInAnonymously(auth);
-          currentUserId = userCredential.user.uid;
-          console.log('Anonymous user authenticated:', currentUserId);
+          console.log('Document will be created as:', `${currentUserId}-${venueId}`);
           return currentUserId;
         }
+        
+        // Priority 2: Wait for auth state from main app or sign in anonymously
+        return new Promise((resolve, reject) => {
+          // Set timeout in case auth state never comes
+          const timeout = setTimeout(() => {
+            console.warn('Auth state timeout (2s), falling back to anonymous sign-in');
+            signInAnonymously(auth).then(userCredential => {
+              currentUserId = userCredential.user.uid;
+              console.log('Fallback anonymous user:', currentUserId);
+              console.log('Document will be created as:', `${currentUserId}-${venueId}`);
+              resolve(currentUserId);
+            }).catch(reject);
+          }, 2000);
+          
+          // Listen for auth state changes
+          const unsubscribe = onAuthStateChanged(auth, (user) => {
+            clearTimeout(timeout);
+            unsubscribe(); // Stop listening after first event
+            
+            console.log('Auth state changed, user:', user ? user.uid : 'null');
+            
+            // Use current Firebase Auth user if available
+            if (user) {
+              currentUserId = user.uid;
+              console.log('✓ Using Firebase Auth user:', currentUserId);
+              console.log('Document will be created as:', `${currentUserId}-${venueId}`);
+              resolve(currentUserId);
+            }
+            // Otherwise sign in anonymously
+            else {
+              console.log('No auth user, signing in anonymously...');
+              signInAnonymously(auth).then(userCredential => {
+                currentUserId = userCredential.user.uid;
+                console.log('Anonymous user authenticated:', currentUserId);
+                console.log('Document will be created as:', `${currentUserId}-${venueId}`);
+                resolve(currentUserId);
+              }).catch(reject);
+            }
+          });
+        });
       } catch (error) {
         console.error('Auth error:', error);
         throw error;
