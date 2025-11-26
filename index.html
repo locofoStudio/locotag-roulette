@@ -367,9 +367,10 @@
     const db = getFirestore(app);
     const auth = getAuth(app);
     
-    // Get venue ID from URL parameter or use default
+    // Get venue ID and user ID from URL parameters
     const urlParams = new URLSearchParams(window.location.search);
-    const venueId = urlParams.get('venue') || 'demo';
+    const venueId = urlParams.get('venue') || urlParams.get('venueId') || 'demo';
+    const urlUserId = urlParams.get('uid') || urlParams.get('userId') || null;
     
     // User state
     let currentUserId = null;
@@ -447,14 +448,37 @@
       return doc(db, 'userVenueProgress', `${userId}-${venueId}`);
     }
     
-    // Initialize anonymous authentication
+    // Initialize authentication - use URL uid if provided, otherwise anonymous
     async function initializeAuth() {
       try {
-        // Sign in anonymously
-        const userCredential = await signInAnonymously(auth);
-        currentUserId = userCredential.user.uid;
-        console.log('Anonymous user authenticated:', currentUserId);
-        return currentUserId;
+        // Check if user is already authenticated (from main app)
+        const currentUser = auth.currentUser;
+        
+        // If user ID is provided in URL, use it (authenticated user from main app)
+        if (urlUserId) {
+          currentUserId = urlUserId;
+          console.log('Using authenticated user ID from URL:', currentUserId);
+          
+          // If Firebase Auth already has this user, great
+          if (currentUser && currentUser.uid === urlUserId) {
+            console.log('User already authenticated in Firebase Auth');
+          } else {
+            console.log('Using user ID from URL (user authenticated in main app)');
+          }
+          
+          return currentUserId;
+        } else if (currentUser) {
+          // No URL uid, but user is already authenticated
+          currentUserId = currentUser.uid;
+          console.log('Using existing authenticated user:', currentUserId);
+          return currentUserId;
+        } else {
+          // No user ID in URL and no existing auth, sign in anonymously
+          const userCredential = await signInAnonymously(auth);
+          currentUserId = userCredential.user.uid;
+          console.log('Anonymous user authenticated:', currentUserId);
+          return currentUserId;
+        }
       } catch (error) {
         console.error('Auth error:', error);
         throw error;
