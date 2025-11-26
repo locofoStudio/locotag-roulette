@@ -349,7 +349,7 @@
   <!-- Firebase SDK -->
   <script type="module">
     import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js';
-    import { getFirestore, doc, getDoc, runTransaction, serverTimestamp, increment } from 'https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js';
+    import { getFirestore, doc, getDoc, setDoc, runTransaction, serverTimestamp, increment } from 'https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js';
     import { getAuth, signInAnonymously, onAuthStateChanged } from 'https://www.gstatic.com/firebasejs/10.7.1/firebase-auth.js';
     
     // Firebase config
@@ -468,43 +468,61 @@
         return;
       }
       
+      const docId = `${currentUserId}-${venueId}`;
+      console.log('Initializing userVenueProgress document:', docId);
+      
       try {
         const docRef = getUserVenueProgressRef(currentUserId);
         const docSnap = await getDoc(docRef);
         
+        console.log('Document exists check:', docSnap.exists(), 'for doc ID:', docId);
+        
         if (!docSnap.exists()) {
+          console.log('Creating new userVenueProgress document:', docId);
+          
           // Create new document for this user at this venue
-          await runTransaction(db, async (transaction) => {
-            const checkDoc = await transaction.get(docRef);
-            
-            // Double-check it doesn't exist (race condition protection)
-            if (!checkDoc.exists()) {
-              transaction.set(docRef, {
-                userId: currentUserId,
-                venueId: venueId,
-                coin: 0,
-                coinsFromGame: 0,
-                coinsFromVenue: 0,
-                coinsRedeemed: 0,
-                spinsAvailable: 0,
-                run: 0,
-                runScore: 0,
-                coinScore: 0,
-                highScore: 0,
-                runHistory: [],
-                savedScore: false,
-                hasPlayed: false,
-                sessions: 0,
-                createdTime: serverTimestamp(),
-                lastUpdated: serverTimestamp(),
-                dataVersion: 2
-              });
-            }
-          });
-          console.log('Created userVenueProgress document for', currentUserId, 'at venue', venueId);
+          const docData = {
+            userId: currentUserId,
+            venueId: venueId,
+            coin: 0,
+            coinsFromGame: 0,
+            coinsFromVenue: 0,
+            coinsRedeemed: 0,
+            spinsAvailable: 0,
+            run: 0,
+            runScore: 0,
+            coinScore: 0,
+            highScore: 0,
+            runHistory: [],
+            savedScore: false,
+            hasPlayed: false,
+            sessions: 0,
+            createdTime: serverTimestamp(),
+            lastUpdated: serverTimestamp(),
+            dataVersion: 2
+          };
+          
+          await setDoc(docRef, docData);
+          
+          // Verify it was created
+          const verifyDoc = await getDoc(docRef);
+          if (verifyDoc.exists()) {
+            console.log('✓ Successfully created userVenueProgress document:', docId);
+          } else {
+            console.error('✗ Failed to create document - verification failed:', docId);
+          }
+        } else {
+          console.log('userVenueProgress document already exists:', docId);
         }
       } catch (error) {
         console.error('Error initializing userVenueProgress:', error);
+        console.error('Error details:', {
+          message: error.message,
+          code: error.code,
+          userId: currentUserId,
+          venueId: venueId,
+          docId: docId
+        });
         // Don't throw - allow game to continue even if initialization fails
       }
     }
