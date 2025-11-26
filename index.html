@@ -442,7 +442,7 @@
     let spinCount = 0;
     let venueConfig = null;
     
-    // Get userVenueProgress document reference
+    // Get userVenueProgress document reference (venue-specific)
     function getUserVenueProgressRef(userId) {
       return doc(db, 'userVenueProgress', `${userId}-${venueId}`);
     }
@@ -461,7 +461,55 @@
       }
     }
     
-    // Load spins available from userVenueProgress
+    // Initialize userVenueProgress document if it doesn't exist
+    async function initializeUserVenueProgress() {
+      if (!currentUserId) {
+        console.warn('No user ID, cannot initialize progress');
+        return;
+      }
+      
+      try {
+        const docRef = getUserVenueProgressRef(currentUserId);
+        const docSnap = await getDoc(docRef);
+        
+        if (!docSnap.exists()) {
+          // Create new document for this user at this venue
+          await runTransaction(db, async (transaction) => {
+            const checkDoc = await transaction.get(docRef);
+            
+            // Double-check it doesn't exist (race condition protection)
+            if (!checkDoc.exists()) {
+              transaction.set(docRef, {
+                userId: currentUserId,
+                venueId: venueId,
+                coin: 0,
+                coinsFromGame: 0,
+                coinsFromVenue: 0,
+                coinsRedeemed: 0,
+                spinsAvailable: 0,
+                run: 0,
+                runScore: 0,
+                coinScore: 0,
+                highScore: 0,
+                runHistory: [],
+                savedScore: false,
+                hasPlayed: false,
+                sessions: 0,
+                createdTime: serverTimestamp(),
+                lastUpdated: serverTimestamp(),
+                dataVersion: 2
+              });
+            }
+          });
+          console.log('Created userVenueProgress document for', currentUserId, 'at venue', venueId);
+        }
+      } catch (error) {
+        console.error('Error initializing userVenueProgress:', error);
+        // Don't throw - allow game to continue even if initialization fails
+      }
+    }
+    
+    // Load spins available from userVenueProgress document (venue-specific)
     async function loadSpinsAvailable() {
       if (!currentUserId) {
         console.warn('No user ID, cannot load spins');
@@ -478,7 +526,7 @@
           updateSpinDisplay();
           return spinsAvailable;
         } else {
-          // Document doesn't exist yet, user has 0 spins
+          // Document doesn't exist yet, user has 0 spins for this venue
           spinsAvailable = 0;
           updateSpinDisplay();
           return 0;
@@ -505,7 +553,7 @@
         throw new Error('No spins available');
       }
       
-      const docRef = getUserVenueProgressRef(currentUserId);
+      const progressRef = getUserVenueProgressRef(currentUserId);
       
       // Determine prize BEFORE transaction (server-side would be better, but this works for now)
       const segments = createWheelSegments(venueConfig.colors);
@@ -514,13 +562,13 @@
       const prizeCoins = prizeSegment.coins || 0;
       
       try {
-        // Atomic transaction: deduct spin and award prize
+        // Atomic transaction: deduct spin and award coins (both in userVenueProgress)
         await runTransaction(db, async (transaction) => {
-          const docSnap = await transaction.get(docRef);
+          const docSnap = await transaction.get(progressRef);
           
           let data;
           if (!docSnap.exists()) {
-            // Create new document for anonymous user
+            // Fallback: Create document if it somehow doesn't exist (shouldn't happen since we create on game entry)
             data = {
               userId: currentUserId,
               venueId: venueId,
@@ -529,13 +577,19 @@
               coinsFromVenue: 0,
               coinsRedeemed: 0,
               spinsAvailable: 0,
+              run: 0,
+              runScore: 0,
+              coinScore: 0,
+              highScore: 0,
+              runHistory: [],
+              savedScore: false,
               hasPlayed: false,
               sessions: 0,
               createdTime: serverTimestamp(),
               lastUpdated: serverTimestamp(),
               dataVersion: 2
             };
-            transaction.set(docRef, data);
+            transaction.set(progressRef, data);
           } else {
             data = docSnap.data();
           }
@@ -546,11 +600,11 @@
             throw new Error('No spins available');
           }
           
-          // Calculate new values
+          // Calculate new spin count
           const newSpinsAvailable = currentSpins - 1;
           
-          // Update document atomically using increment for coins
-          transaction.update(docRef, {
+          // Update document atomically: deduct spin and award coins
+          transaction.update(progressRef, {
             spinsAvailable: newSpinsAvailable,
             coinsFromGame: increment(prizeCoins),
             coin: increment(prizeCoins), // Also increment total coin
@@ -786,6 +840,9 @@
         
         // Initialize authentication (anonymous)
         await initializeAuth();
+        
+        // Initialize userVenueProgress document if it doesn't exist
+        await initializeUserVenueProgress();
         
         // Load venue configuration
         venueConfig = await loadVenueConfig(venueId);
