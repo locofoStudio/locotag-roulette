@@ -1,0 +1,636 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Locotag Lucky Spin</title>
+  
+  <!-- External Libraries -->
+  <script src="https://cdn.jsdelivr.net/gh/zarocknz/javascript-winwheel@master/Winwheel.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.0/gsap.min.js"></script>
+  
+  <style>
+    :root {
+      /* Default Locotag colors - will be overridden by venue */
+      --bg-primary: #0F2533;
+      --bg-dark: #0F2533;
+      --bg-light: #0C1D27;
+      --accent-1: #E86526;
+      --accent-2: #BF9BF2;
+      --accent-3: #C5C352;
+      --accent-4: #6FA6A0;
+      --text-primary: #FFFFFF;
+      --text-secondary: #B0C4D4;
+      --disable: #525E5D;
+    }
+    
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+    
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      background: var(--bg-primary);
+      color: var(--text-primary);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+      padding: 20px;
+    }
+    
+    .header {
+      text-align: center;
+      margin-bottom: 24px;
+    }
+    
+    .spin-counter {
+      display: inline-block;
+      background: var(--accent-3);
+      padding: 8px 20px;
+      border-radius: 20px;
+      font-size: 18px;
+      font-weight: bold;
+      color: var(--bg-dark);
+    }
+    
+    .wheel-container {
+      position: relative;
+      margin: 32px 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    
+    .wheel-glow {
+      position: absolute;
+      width: 110%;
+      height: 110%;
+      border-radius: 50%;
+      background: radial-gradient(circle, var(--accent-1), transparent);
+      opacity: 0.3;
+      animation: pulse 2s infinite;
+      pointer-events: none;
+      z-index: 0;
+    }
+    
+    @keyframes pulse {
+      0%, 100% { transform: scale(1); opacity: 0.3; }
+      50% { transform: scale(1.05); opacity: 0.5; }
+    }
+    
+    #wheelCanvas {
+      display: block;
+      max-width: 90vw;
+      max-height: 400px;
+      filter: drop-shadow(0 8px 20px rgba(0,0,0,0.5));
+      position: relative;
+      z-index: 1;
+    }
+    
+    .wheel-pointer {
+      position: absolute;
+      top: -15px;
+      left: 50%;
+      transform: translateX(-50%);
+      width: 0;
+      height: 0;
+      border-left: 18px solid transparent;
+      border-right: 18px solid transparent;
+      border-top: 35px solid var(--accent-1);
+      filter: drop-shadow(0 3px 6px rgba(0,0,0,0.6));
+      z-index: 10;
+    }
+    
+    .wheel-center-button {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      width: 60px;
+      height: 60px;
+      background: radial-gradient(circle, var(--accent-1), var(--accent-1));
+      border-radius: 50%;
+      border: 4px solid var(--bg-dark);
+      box-shadow: 0 4px 12px rgba(0,0,0,0.6);
+      pointer-events: none;
+      z-index: 5;
+    }
+    
+    .spin-btn {
+      width: 220px;
+      height: 70px;
+      background: linear-gradient(180deg, var(--accent-1), color-mix(in srgb, var(--accent-1) 80%, black));
+      border: none;
+      border-radius: 16px;
+      color: white;
+      font-size: 28px;
+      font-weight: 900;
+      text-transform: uppercase;
+      letter-spacing: 2px;
+      cursor: pointer;
+      box-shadow: 0 6px 0 color-mix(in srgb, var(--accent-1) 60%, black), 
+                  0 8px 20px rgba(0,0,0,0.4);
+      transition: all 0.1s;
+      margin-top: 24px;
+    }
+    
+    .spin-btn:hover:not(:disabled) {
+      transform: translateY(-2px);
+      box-shadow: 0 8px 0 color-mix(in srgb, var(--accent-1) 60%, black), 
+                  0 10px 24px rgba(0,0,0,0.5);
+    }
+    
+    .spin-btn:active {
+      transform: translateY(4px);
+      box-shadow: 0 2px 0 color-mix(in srgb, var(--accent-1) 60%, black);
+    }
+    
+    .spin-btn:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+    
+    /* Win Modal */
+    .modal {
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      background: rgba(15, 37, 51, 0.95);
+      backdrop-filter: blur(8px);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 1000;
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 0.3s;
+    }
+    
+    .modal.show {
+      opacity: 1;
+      pointer-events: all;
+    }
+    
+    .modal-content {
+      background: var(--bg-light);
+      border: 2px solid var(--accent-1);
+      border-radius: 24px;
+      padding: 40px;
+      text-align: center;
+      max-width: 90%;
+      width: 360px;
+      transform: scale(0.8);
+      transition: transform 0.3s cubic-bezier(0.68, -0.55, 0.265, 1.55);
+    }
+    
+    .modal.show .modal-content {
+      transform: scale(1);
+    }
+    
+    .win-title {
+      font-size: 36px;
+      margin-bottom: 20px;
+      color: var(--accent-3);
+      animation: celebrate 0.6s ease-out;
+      text-shadow: 0 0 20px rgba(197, 195, 82, 0.5);
+    }
+    
+    .prize-display {
+      margin: 32px 0;
+      animation: prizeReveal 0.8s cubic-bezier(0.68, -0.55, 0.265, 1.55);
+    }
+    
+    #prizeAmount {
+      display: block;
+      font-size: 72px;
+      font-weight: 900;
+      color: var(--accent-1);
+      line-height: 1;
+      animation: prizePulse 1s ease-in-out infinite;
+      text-shadow: 0 0 30px rgba(232, 101, 38, 0.6);
+    }
+    
+    .prize-label {
+      display: block;
+      font-size: 24px;
+      color: var(--text-secondary);
+      margin-top: 12px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 2px;
+    }
+    
+    @keyframes celebrate {
+      0% {
+        transform: scale(0) rotate(-180deg);
+        opacity: 0;
+      }
+      50% {
+        transform: scale(1.2) rotate(10deg);
+      }
+      100% {
+        transform: scale(1) rotate(0deg);
+        opacity: 1;
+      }
+    }
+    
+    @keyframes prizeReveal {
+      0% {
+        transform: scale(0);
+        opacity: 0;
+      }
+      60% {
+        transform: scale(1.15);
+      }
+      100% {
+        transform: scale(1);
+        opacity: 1;
+      }
+    }
+    
+    @keyframes prizePulse {
+      0%, 100% {
+        transform: scale(1);
+      }
+      50% {
+        transform: scale(1.05);
+      }
+    }
+    
+    .collect-btn {
+      background: var(--accent-3);
+      color: var(--bg-dark);
+      border: none;
+      padding: 16px 48px;
+      font-size: 20px;
+      font-weight: 800;
+      border-radius: 12px;
+      cursor: pointer;
+      margin-top: 16px;
+      transition: all 0.2s;
+    }
+    
+    .collect-btn:hover {
+      transform: scale(1.05);
+      box-shadow: 0 4px 12px rgba(197, 195, 82, 0.4);
+    }
+    
+    /* Confetti */
+    .confetti-piece {
+      position: absolute;
+      width: 10px;
+      height: 10px;
+      animation: confetti-fall 3s linear forwards;
+    }
+    
+    @keyframes confetti-fall {
+      to {
+        transform: translateY(100vh) rotate(720deg);
+        opacity: 0;
+      }
+    }
+    
+    /* Loading State */
+    .loading {
+      text-align: center;
+      padding: 40px;
+      font-size: 18px;
+      color: var(--text-secondary);
+    }
+    
+    /* Responsive */
+    @media (max-width: 480px) {
+      .spin-btn {
+        width: 180px;
+        height: 60px;
+        font-size: 24px;
+      }
+      
+      #wheelCanvas {
+        max-width: 85vw;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <div class="spin-counter">
+      Spins: <span id="spinCount">0</span>
+    </div>
+  </div>
+  
+  <div class="wheel-container">
+    <div class="wheel-glow"></div>
+    <div class="wheel-pointer"></div>
+    <canvas id="wheelCanvas" width="400" height="400"></canvas>
+    <div class="wheel-center-button"></div>
+  </div>
+  
+  <button id="spinBtn" class="spin-btn" disabled>SPIN</button>
+  
+  <!-- Win Modal -->
+  <div id="winModal" class="modal">
+    <div class="modal-content">
+      <h2 class="win-title">🎉 You Won!</h2>
+      <div class="prize-display">
+        <span id="prizeAmount">0</span>
+        <span class="prize-label" id="prizeLabel">Coins</span>
+      </div>
+      <button id="collectBtn" class="collect-btn">COLLECT</button>
+    </div>
+  </div>
+  
+  <!-- Firebase SDK -->
+  <script type="module">
+    import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js';
+    import { getFirestore, doc, getDoc } from 'https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js';
+    
+    // Firebase config
+    const firebaseConfig = {
+      apiKey: "AIzaSyDTgpaJ1UMaKd1TxMhunRsOlieN8mWpjM4",
+      authDomain: "locotag.firebaseapp.com",
+      projectId: "locotag",
+      storageBucket: "locotag.firebasestorage.app",
+      messagingSenderId: "783647689390",
+      appId: "1:783647689390:web:2dfe72017ec74be3863b3f",
+      measurementId: "G-3J2CKXKNV3"
+    };
+    
+    const app = initializeApp(firebaseConfig);
+    const db = getFirestore(app);
+    
+    // Get venue ID from URL parameter or use default
+    const urlParams = new URLSearchParams(window.location.search);
+    const venueId = urlParams.get('venue') || 'demo';
+    
+    // Default Locotag colors
+    function getDefaultConfig() {
+      return {
+        name: 'Locotag',
+        colors: {
+          accent1: "#E86526",
+          accent2: "#BF9BF2",
+          accent3: "#C5C352",
+          accent4: "#6FA6A0",
+          background: "#0F2533",
+          backgroundDark: "#0F2533",
+          backgroundLight: "#0C1D27",
+          disable: "#525E5D",
+          dropShadow: "#C5C352",
+          error: "#FC1414",
+          metrics: "#E86526",
+          primary: "#0F2533",
+          secondary: "#FFFFFF"
+        }
+      };
+    }
+    
+    // Load venue configuration from Firebase
+    async function loadVenueConfig(venueId) {
+      try {
+        const docRef = doc(db, 'venues', venueId);
+        const docSnap = await getDoc(docRef);
+        
+        if (docSnap.exists()) {
+          const data = docSnap.data();
+          return {
+            name: data.name || 'Locotag',
+            logo: data.logo || '',
+            colors: data.colors || getDefaultConfig().colors
+          };
+        } else {
+          console.warn('Venue not found, using default config');
+          return getDefaultConfig();
+        }
+      } catch (error) {
+        console.error('Error loading venue:', error);
+        return getDefaultConfig();
+      }
+    }
+    
+    // Apply venue colors to CSS variables
+    function applyVenueColors(colors) {
+      const root = document.documentElement;
+      root.style.setProperty('--bg-primary', colors.background || '#0F2533');
+      root.style.setProperty('--bg-dark', colors.backgroundDark || '#0F2533');
+      root.style.setProperty('--bg-light', colors.backgroundLight || '#0C1D27');
+      root.style.setProperty('--accent-1', colors.accent1 || '#E86526');
+      root.style.setProperty('--accent-2', colors.accent2 || '#BF9BF2');
+      root.style.setProperty('--accent-3', colors.accent3 || '#C5C352');
+      root.style.setProperty('--accent-4', colors.accent4 || '#6FA6A0');
+      root.style.setProperty('--text-primary', colors.secondary || '#FFFFFF');
+      root.style.setProperty('--text-secondary', '#B0C4D4');
+      root.style.setProperty('--disable', colors.disable || '#525E5D');
+    }
+    
+    // Game State
+    let wheel;
+    let isSpinning = false;
+    let spinCount = 0;
+    let venueConfig = null;
+    
+    // Wheel segment configuration
+    function createWheelSegments(venueColors) {
+      const wheelColors = {
+        segment1: venueColors.accent2 || '#BF9BF2',
+        segment2: venueColors.accent3 || '#C5C352',
+        segment3: venueColors.accent1 || '#E86526',
+        segment4: venueColors.accent4 || '#6FA6A0',
+        segmentLight: '#FFF4E0',
+        segmentDark: venueColors.backgroundDark || '#0F2533'
+      };
+      
+      return [
+        {text: '300', coins: 300, color: wheelColors.segmentLight, textColor: '#776e65'},
+        {text: 'STOP', coins: 0, color: wheelColors.accent4, textColor: '#FFFFFF'},
+        {text: '150', coins: 150, color: wheelColors.segment1, textColor: '#FFFFFF'},
+        {text: '🎁', coins: 0, item: 'free_item', color: wheelColors.segment3, textColor: '#FFFFFF'},
+        {text: '50', coins: 50, color: wheelColors.segment2, textColor: '#FFFFFF'},
+        {text: '20', coins: 20, color: wheelColors.segmentLight, textColor: '#776e65'},
+        {text: '∞', coins: 1000, color: wheelColors.segment3, textColor: '#FFFFFF'},
+        {text: '5', coins: 5, color: wheelColors.segmentLight, textColor: '#776e65'}
+      ];
+    }
+    
+    // Initialize wheel
+    function initWheel(venueColors) {
+      const segments = createWheelSegments(venueColors);
+      
+      wheel = new Winwheel({
+        canvasId: 'wheelCanvas',
+        numSegments: segments.length,
+        outerRadius: 180,
+        textFontSize: 24,
+        textFontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+        textFontWeight: 'bold',
+        textOrientation: 'curved',
+        textAlignment: 'outer',
+        textMargin: 20,
+        segments: segments.map(seg => ({
+          fillStyle: seg.color,
+          text: seg.text,
+          textFillStyle: seg.textColor,
+          textFontSize: seg.text === '∞' ? 36 : 24
+        })),
+        animation: {
+          type: 'spinToStop',
+          duration: 5,
+          spins: 8,
+          callbackFinished: onSpinComplete
+        }
+      });
+    }
+    
+    // Spin complete callback
+    function onSpinComplete(indicatedSegment) {
+      isSpinning = false;
+      const segments = createWheelSegments(venueConfig.colors);
+      
+      // Find the matching segment by comparing text
+      const segment = segments.find(seg => seg.text === indicatedSegment.text) || segments[0];
+      
+      // Small delay to let wheel settle, then show celebration
+      setTimeout(() => {
+        // Show win modal with celebration
+        showWinModal(segment);
+        
+        // Create confetti
+        createConfetti();
+      }, 300);
+      
+      // Re-enable spin button after modal is shown
+      setTimeout(() => {
+        document.getElementById('spinBtn').disabled = false;
+      }, 500);
+    }
+    
+    // Show win modal with celebration
+    function showWinModal(segment) {
+      const modal = document.getElementById('winModal');
+      const prizeAmount = document.getElementById('prizeAmount');
+      const prizeLabel = document.getElementById('prizeLabel');
+      const winTitle = document.querySelector('.win-title');
+      
+      // Determine what was won
+      let amount = 0;
+      let label = '';
+      let emoji = '🎉';
+      
+      if (segment.item) {
+        amount = segment.text;
+        label = 'Free Item!';
+        emoji = '🎁';
+      } else if (segment.coins > 0) {
+        amount = segment.coins.toLocaleString(); // Format with commas
+        label = segment.coins === 1000 ? 'JACKPOT COINS!' : 'Coins';
+        emoji = segment.coins === 1000 ? '🏆' : '💰';
+      } else {
+        amount = segment.text;
+        label = 'Try Again!';
+        emoji = '😔';
+      }
+      
+      // Update modal content
+      winTitle.textContent = `${emoji} You Won!`;
+      prizeAmount.textContent = amount;
+      prizeLabel.textContent = label;
+      
+      // Show modal with animation
+      modal.classList.add('show');
+      
+      // Add extra celebration for big wins
+      if (segment.coins >= 300) {
+        createConfetti(); // Extra confetti for big wins
+      }
+    }
+    
+    // Create confetti effect
+    function createConfetti() {
+      const colors = [
+        venueConfig.colors.accent1,
+        venueConfig.colors.accent2,
+        venueConfig.colors.accent3,
+        venueConfig.colors.accent4
+      ];
+      
+      // Create more confetti pieces for better effect
+      for (let i = 0; i < 80; i++) {
+        const confetti = document.createElement('div');
+        confetti.className = 'confetti-piece';
+        confetti.style.left = Math.random() * 100 + '%';
+        confetti.style.top = '-10px';
+        confetti.style.width = (Math.random() * 10 + 8) + 'px';
+        confetti.style.height = (Math.random() * 10 + 8) + 'px';
+        confetti.style.borderRadius = Math.random() > 0.5 ? '50%' : '0';
+        confetti.style.backgroundColor = colors[Math.floor(Math.random() * colors.length)];
+        confetti.style.animationDelay = Math.random() * 0.5 + 's';
+        confetti.style.animationDuration = (Math.random() * 2 + 2.5) + 's';
+        confetti.style.transform = `rotate(${Math.random() * 360}deg)`;
+        document.body.appendChild(confetti);
+        
+        setTimeout(() => confetti.remove(), 4000);
+      }
+    }
+    
+    // Spin button handler
+    document.getElementById('spinBtn').addEventListener('click', () => {
+      if (isSpinning) return;
+      
+      isSpinning = true;
+      spinCount++;
+      document.getElementById('spinCount').textContent = spinCount;
+      document.getElementById('spinBtn').disabled = true;
+      
+      // Random segment to land on (1-8)
+      const stopAt = Math.floor(Math.random() * 8) + 1;
+      
+      // Calculate stop angle to land in the center of the segment
+      // Each segment is 45 degrees (360/8)
+      // Center of segment N is at (N-1)*45 + 22.5 degrees
+      // We need to rotate so the center ends up at the pointer (0 degrees)
+      // Stop angle = 360 - ((stopAt-1)*45 + 22.5)
+      const segmentSize = 360 / 8; // 45 degrees
+      const segmentCenter = (stopAt - 1) * segmentSize + (segmentSize / 2); // Center of the segment
+      const stopAngle = 360 - segmentCenter;
+      
+      // Start spin animation
+      wheel.startAnimation();
+      wheel.rotationAngle = 0;
+      wheel.animation.stopAngle = stopAngle;
+    });
+    
+    // Collect button handler
+    document.getElementById('collectBtn').addEventListener('click', () => {
+      const modal = document.getElementById('winModal');
+      modal.classList.remove('show');
+      
+      // Here you would typically send the prize to your backend
+      console.log('Prize collected!');
+    });
+    
+    // Initialize game
+    async function initGame() {
+      venueConfig = await loadVenueConfig(venueId);
+      
+      // Apply venue colors
+      applyVenueColors(venueConfig.colors);
+      
+      // Initialize wheel
+      initWheel(venueConfig.colors);
+      
+      // Enable spin button
+      document.getElementById('spinBtn').disabled = false;
+    }
+    
+    // Start game when page loads
+    initGame();
+  </script>
+</body>
+</html>
+
