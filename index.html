@@ -518,69 +518,31 @@
       }
     }
     
-    // Initialize userVenueProgress document if it doesn't exist
-    async function initializeUserVenueProgress() {
+    // Check if userVenueProgress document exists (created by main app)
+    async function checkUserVenueProgress() {
       if (!currentUserId) {
-        console.warn('No user ID, cannot initialize progress');
-        return;
+        console.warn('No user ID, cannot check progress');
+        return false;
       }
       
       const docId = `${currentUserId}-${venueId}`;
-      console.log('Initializing userVenueProgress document:', docId);
+      console.log('Checking userVenueProgress document:', docId);
       
       try {
         const docRef = getUserVenueProgressRef(currentUserId);
         const docSnap = await getDoc(docRef);
         
-        console.log('Document exists check:', docSnap.exists(), 'for doc ID:', docId);
-        
-        if (!docSnap.exists()) {
-          console.log('Creating new userVenueProgress document:', docId);
-          
-          // Create new document for this user at this venue
-          const docData = {
-            userId: currentUserId,
-            venueId: venueId,
-            coin: 0,
-            coinsFromGame: 0,
-            coinsFromVenue: 0,
-            coinsRedeemed: 0,
-            spinsAvailable: 0,
-            run: 0,
-            runScore: 0,
-            coinScore: 0,
-            highScore: 0,
-            runHistory: [],
-            savedScore: false,
-            hasPlayed: false,
-            sessions: 0,
-            createdTime: serverTimestamp(),
-            lastUpdated: serverTimestamp(),
-            dataVersion: 2
-          };
-          
-          await setDoc(docRef, docData);
-          
-          // Verify it was created
-          const verifyDoc = await getDoc(docRef);
-          if (verifyDoc.exists()) {
-            console.log('✓ Successfully created userVenueProgress document:', docId);
-          } else {
-            console.error('✗ Failed to create document - verification failed:', docId);
-          }
+        if (docSnap.exists()) {
+          console.log('✓ userVenueProgress document exists:', docId);
+          return true;
         } else {
-          console.log('userVenueProgress document already exists:', docId);
+          console.warn('✗ userVenueProgress document does NOT exist:', docId);
+          console.warn('The main app should create this document when user makes a purchase or scans a receipt');
+          return false;
         }
       } catch (error) {
-        console.error('Error initializing userVenueProgress:', error);
-        console.error('Error details:', {
-          message: error.message,
-          code: error.code,
-          userId: currentUserId,
-          venueId: venueId,
-          docId: docId
-        });
-        // Don't throw - allow game to continue even if initialization fails
+        console.error('Error checking userVenueProgress:', error);
+        return false;
       }
     }
     
@@ -641,33 +603,12 @@
         await runTransaction(db, async (transaction) => {
           const docSnap = await transaction.get(progressRef);
           
-          let data;
+          // Document must exist (created by main app)
           if (!docSnap.exists()) {
-            // Fallback: Create document if it somehow doesn't exist (shouldn't happen since we create on game entry)
-            data = {
-              userId: currentUserId,
-              venueId: venueId,
-              coin: 0,
-              coinsFromGame: 0,
-              coinsFromVenue: 0,
-              coinsRedeemed: 0,
-              spinsAvailable: 0,
-              run: 0,
-              runScore: 0,
-              coinScore: 0,
-              highScore: 0,
-              runHistory: [],
-              savedScore: false,
-              hasPlayed: false,
-              sessions: 0,
-              createdTime: serverTimestamp(),
-              lastUpdated: serverTimestamp(),
-              dataVersion: 2
-            };
-            transaction.set(progressRef, data);
-          } else {
-            data = docSnap.data();
+            throw new Error('userVenueProgress document does not exist. Please make a purchase or scan a receipt in the main app first.');
           }
+          
+          const data = docSnap.data();
           
           const currentSpins = data.spinsAvailable || 0;
           
@@ -913,11 +854,11 @@
         document.getElementById('spinBtn').disabled = true;
         document.getElementById('spinBtn').textContent = 'LOADING...';
         
-        // Initialize authentication (anonymous)
+        // Initialize authentication
         await initializeAuth();
         
-        // Initialize userVenueProgress document if it doesn't exist
-        await initializeUserVenueProgress();
+        // Check if userVenueProgress document exists (should be created by main app)
+        const docExists = await checkUserVenueProgress();
         
         // Load venue configuration
         venueConfig = await loadVenueConfig(venueId);
