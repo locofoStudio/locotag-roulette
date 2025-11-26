@@ -349,7 +349,8 @@
   <!-- Firebase SDK -->
   <script type="module">
     import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js';
-    import { getFirestore, doc, getDoc } from 'https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js';
+    import { getFirestore, doc, getDoc, runTransaction, serverTimestamp, increment } from 'https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js';
+    import { getAuth, signInAnonymously, onAuthStateChanged } from 'https://www.gstatic.com/firebasejs/10.7.1/firebase-auth.js';
     
     // Firebase config
     const firebaseConfig = {
@@ -364,10 +365,16 @@
     
     const app = initializeApp(firebaseConfig);
     const db = getFirestore(app);
+    const auth = getAuth(app);
     
     // Get venue ID from URL parameter or use default
     const urlParams = new URLSearchParams(window.location.search);
     const venueId = urlParams.get('venue') || 'demo';
+    
+    // User state
+    let currentUserId = null;
+    let spinsAvailable = 0;
+    let currentPrize = null; // Store prize to award after spin
     
     // Default Locotag colors
     function getDefaultConfig() {
@@ -435,6 +442,138 @@
     let spinCount = 0;
     let venueConfig = null;
     
+    // Get userVenueProgress document reference
+    function getUserVenueProgressRef(userId) {
+      return doc(db, 'userVenueProgress', `${userId}-${venueId}`);
+    }
+    
+    // Initialize anonymous authentication
+    async function initializeAuth() {
+      try {
+        // Sign in anonymously
+        const userCredential = await signInAnonymously(auth);
+        currentUserId = userCredential.user.uid;
+        console.log('Anonymous user authenticated:', currentUserId);
+        return currentUserId;
+      } catch (error) {
+        console.error('Auth error:', error);
+        throw error;
+      }
+    }
+    
+    // Load spins available from userVenueProgress
+    async function loadSpinsAvailable() {
+      if (!currentUserId) {
+        console.warn('No user ID, cannot load spins');
+        return 0;
+      }
+      
+      try {
+        const docRef = getUserVenueProgressRef(currentUserId);
+        const docSnap = await getDoc(docRef);
+        
+        if (docSnap.exists()) {
+          const data = docSnap.data();
+          spinsAvailable = data.spinsAvailable || 0;
+          updateSpinDisplay();
+          return spinsAvailable;
+        } else {
+          // Document doesn't exist yet, user has 0 spins
+          spinsAvailable = 0;
+          updateSpinDisplay();
+          return 0;
+        }
+      } catch (error) {
+        console.error('Error loading spins:', error);
+        return 0;
+      }
+    }
+    
+    // Update spin count display
+    function updateSpinDisplay() {
+      document.getElementById('spinCount').textContent = spinsAvailable;
+      document.getElementById('spinBtn').disabled = spinsAvailable <= 0 || isSpinning;
+    }
+    
+    // Deduct spin and determine prize (atomic transaction)
+    async function useSpinAndGetPrize() {
+      if (!currentUserId) {
+        throw new Error('User not authenticated');
+      }
+      
+      if (spinsAvailable <= 0) {
+        throw new Error('No spins available');
+      }
+      
+      const docRef = getUserVenueProgressRef(currentUserId);
+      
+      // Determine prize BEFORE transaction (server-side would be better, but this works for now)
+      const segments = createWheelSegments(venueConfig.colors);
+      const randomIndex = Math.floor(Math.random() * segments.length);
+      const prizeSegment = segments[randomIndex];
+      const prizeCoins = prizeSegment.coins || 0;
+      
+      try {
+        // Atomic transaction: deduct spin and award prize
+        await runTransaction(db, async (transaction) => {
+          const docSnap = await transaction.get(docRef);
+          
+          let data;
+          if (!docSnap.exists()) {
+            // Create new document for anonymous user
+            data = {
+              userId: currentUserId,
+              venueId: venueId,
+              coin: 0,
+              coinsFromGame: 0,
+              coinsFromVenue: 0,
+              coinsRedeemed: 0,
+              spinsAvailable: 0,
+              hasPlayed: false,
+              sessions: 0,
+              createdTime: serverTimestamp(),
+              lastUpdated: serverTimestamp(),
+              dataVersion: 2
+            };
+            transaction.set(docRef, data);
+          } else {
+            data = docSnap.data();
+          }
+          
+          const currentSpins = data.spinsAvailable || 0;
+          
+          if (currentSpins <= 0) {
+            throw new Error('No spins available');
+          }
+          
+          // Calculate new values
+          const newSpinsAvailable = currentSpins - 1;
+          
+          // Update document atomically using increment for coins
+          transaction.update(docRef, {
+            spinsAvailable: newSpinsAvailable,
+            coinsFromGame: increment(prizeCoins),
+            coin: increment(prizeCoins), // Also increment total coin
+            hasPlayed: true,
+            lastUpdated: serverTimestamp()
+          });
+          
+          // Update local state
+          spinsAvailable = newSpinsAvailable;
+          currentPrize = {
+            coins: prizeCoins,
+            segment: prizeSegment
+          };
+        });
+        
+        updateSpinDisplay();
+        return prizeSegment;
+      } catch (error) {
+        console.error('Error using spin:', error);
+        throw error;
+      }
+    }
+    
     // Wheel segment configuration
     function createWheelSegments(venueColors) {
       const wheelColors = {
@@ -490,10 +629,9 @@
     // Spin complete callback
     function onSpinComplete(indicatedSegment) {
       isSpinning = false;
-      const segments = createWheelSegments(venueConfig.colors);
       
-      // Find the matching segment by comparing text
-      const segment = segments.find(seg => seg.text === indicatedSegment.text) || segments[0];
+      // Use the prize that was already determined and saved
+      const segment = currentPrize?.segment || indicatedSegment;
       
       // Small delay to let wheel settle, then show celebration
       setTimeout(() => {
@@ -502,12 +640,13 @@
         
         // Create confetti
         createConfetti();
+        
+        // Clear current prize
+        currentPrize = null;
       }, 300);
       
-      // Re-enable spin button after modal is shown
-      setTimeout(() => {
-        document.getElementById('spinBtn').disabled = false;
-      }, 500);
+      // Update button state
+      updateSpinDisplay();
     }
     
     // Show win modal with celebration
@@ -579,30 +718,53 @@
     }
     
     // Spin button handler
-    document.getElementById('spinBtn').addEventListener('click', () => {
-      if (isSpinning) return;
+    document.getElementById('spinBtn').addEventListener('click', async () => {
+      if (isSpinning || spinsAvailable <= 0) return;
       
-      isSpinning = true;
-      spinCount++;
-      document.getElementById('spinCount').textContent = spinCount;
-      document.getElementById('spinBtn').disabled = true;
-      
-      // Random segment to land on (1-8)
-      const stopAt = Math.floor(Math.random() * 8) + 1;
-      
-      // Calculate stop angle to land in the center of the segment
-      // Each segment is 45 degrees (360/8)
-      // Center of segment N is at (N-1)*45 + 22.5 degrees
-      // We need to rotate so the center ends up at the pointer (0 degrees)
-      // Stop angle = 360 - ((stopAt-1)*45 + 22.5)
-      const segmentSize = 360 / 8; // 45 degrees
-      const segmentCenter = (stopAt - 1) * segmentSize + (segmentSize / 2); // Center of the segment
-      const stopAngle = 360 - segmentCenter;
-      
-      // Start spin animation
-      wheel.startAnimation();
-      wheel.rotationAngle = 0;
-      wheel.animation.stopAngle = stopAngle;
+      try {
+        isSpinning = true;
+        document.getElementById('spinBtn').disabled = true;
+        
+        // Deduct spin and get prize (atomic transaction)
+        const prizeSegment = await useSpinAndGetPrize();
+        
+        // Find segment index to determine stop angle
+        const segments = createWheelSegments(venueConfig.colors);
+        const segmentIndex = segments.findIndex(seg => 
+          seg.text === prizeSegment.text && 
+          seg.coins === prizeSegment.coins &&
+          (seg.item || false) === (prizeSegment.item || false)
+        );
+        
+        if (segmentIndex === -1) {
+          console.error('Could not find segment:', prizeSegment);
+          throw new Error('Invalid prize segment');
+        }
+        
+        // Calculate stop angle to land on the prize segment
+        // Each segment is 45 degrees (360/8)
+        // Center of segment N is at (N-1)*45 + 22.5 degrees
+        // We need to rotate so the center ends up at the pointer (0 degrees)
+        const segmentSize = 360 / 8; // 45 degrees
+        const segmentNumber = segmentIndex + 1; // 1-based
+        const segmentCenter = (segmentNumber - 1) * segmentSize + (segmentSize / 2);
+        const stopAngle = 360 - segmentCenter;
+        
+        // Add extra spins for visual effect
+        const extraSpins = 5;
+        const finalStopAngle = stopAngle + (360 * extraSpins);
+        
+        // Start spin animation
+        wheel.startAnimation();
+        wheel.rotationAngle = 0;
+        wheel.animation.stopAngle = finalStopAngle;
+        
+      } catch (error) {
+        console.error('Error starting spin:', error);
+        alert('Error: ' + error.message);
+        isSpinning = false;
+        updateSpinDisplay();
+      }
     });
     
     // Collect button handler
@@ -610,22 +772,43 @@
       const modal = document.getElementById('winModal');
       modal.classList.remove('show');
       
-      // Here you would typically send the prize to your backend
-      console.log('Prize collected!');
+      // Prize was already awarded in the transaction when spin was used
+      // This button just closes the modal
+      console.log('Prize collected! Coins already added to account.');
     });
     
     // Initialize game
     async function initGame() {
-      venueConfig = await loadVenueConfig(venueId);
-      
-      // Apply venue colors
-      applyVenueColors(venueConfig.colors);
-      
-      // Initialize wheel
-      initWheel(venueConfig.colors);
-      
-      // Enable spin button
-      document.getElementById('spinBtn').disabled = false;
+      try {
+        // Show loading state
+        document.getElementById('spinBtn').disabled = true;
+        document.getElementById('spinBtn').textContent = 'LOADING...';
+        
+        // Initialize authentication (anonymous)
+        await initializeAuth();
+        
+        // Load venue configuration
+        venueConfig = await loadVenueConfig(venueId);
+        
+        // Apply venue colors
+        applyVenueColors(venueConfig.colors);
+        
+        // Initialize wheel
+        initWheel(venueConfig.colors);
+        
+        // Load spins available
+        await loadSpinsAvailable();
+        
+        // Update UI
+        document.getElementById('spinBtn').textContent = 'SPIN';
+        updateSpinDisplay();
+        
+      } catch (error) {
+        console.error('Error initializing game:', error);
+        document.getElementById('spinBtn').textContent = 'ERROR';
+        document.getElementById('spinBtn').disabled = true;
+        alert('Failed to initialize game. Please refresh the page.');
+      }
     }
     
     // Start game when page loads
