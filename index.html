@@ -893,16 +893,16 @@
       const modal = document.getElementById('winModal');
       modal.classList.remove('show');
       
-      // Update coinsFromGame in userVenueProgress document
+      // Update coins in userVenueProgress document
       if (actualWonSegment && currentUserId && actualWonSegment.coins > 0) {
         try {
           const docRef = getUserVenueProgressRef(currentUserId);
           await updateDoc(docRef, {
-            coinsFromGame: increment(actualWonSegment.coins)
+            coins: increment(actualWonSegment.coins)
           });
-          console.log(`✓ Added ${actualWonSegment.coins} coins to coinsFromGame`);
+          console.log(`✓ Added ${actualWonSegment.coins} coins to coins field`);
         } catch (error) {
-          console.error('Error updating coinsFromGame:', error);
+          console.error('Error updating coins:', error);
           alert('Error updating coins. Please try again.');
         }
       } else if (actualWonSegment && actualWonSegment.item) {
