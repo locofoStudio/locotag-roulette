@@ -928,8 +928,7 @@
         }
         
         if (!gameToken) {
-          console.warn('No token detected in URL. Backend spin endpoint will reject requests.');
-          alert('Missing security token. Please relaunch this roulette from the Locotag app.');
+          console.warn('No token detected in URL. Running in local mode - spins will work locally but backend features will be unavailable.');
         }
         
         // Load venue configuration
