@@ -690,13 +690,13 @@
       };
       
       return [
-        {text: '300', coins: 300, color: wheelColors.segmentLight, textColor: '#776e65'},
-        {text: 'STOP', coins: 0, color: wheelColors.accent4, textColor: '#FFFFFF'},
+        {text: '80', coins: 80, color: wheelColors.segmentLight, textColor: '#776e65'},
+        {text: '+1 SPIN', coins: 0, bonusSpin: 1, color: wheelColors.accent4, textColor: '#FFFFFF'},
         {text: '150', coins: 150, color: wheelColors.segment1, textColor: '#FFFFFF'},
-        {text: '🎁', coins: 0, item: 'free_item', color: wheelColors.segment3, textColor: '#FFFFFF'},
+        {text: '10', coins: 10, item: 'free_item', color: wheelColors.segment3, textColor: '#FFFFFF'},
         {text: '50', coins: 50, color: wheelColors.segment2, textColor: '#FFFFFF'},
         {text: '20', coins: 20, color: wheelColors.segmentLight, textColor: '#776e65'},
-        {text: '∞', coins: 1000, color: wheelColors.segment3, textColor: '#FFFFFF'},
+        {text: 'JACK POT', coins: 500, color: wheelColors.segment3, textColor: '#FFFFFF'},
         {text: '5', coins: 5, color: wheelColors.segmentLight, textColor: '#776e65'}
       ];
     }
@@ -781,14 +781,18 @@
       let label = '';
       let emoji = '🎉';
       
-      if (segment.item) {
+      if (segment.bonusSpin && segment.bonusSpin > 0) {
+        amount = `+${segment.bonusSpin}`;
+        label = 'Bonus Spin!';
+        emoji = '🎰';
+      } else if (segment.item) {
         amount = segment.text;
         label = 'Free Item!';
         emoji = '🎁';
       } else if (segment.coins > 0) {
         amount = segment.coins.toLocaleString(); // Format with commas
-        label = segment.coins === 1000 ? 'JACKPOT COINS!' : 'Coins';
-        emoji = segment.coins === 1000 ? '🏆' : '💰';
+        label = segment.coins >= 500 ? 'JACKPOT COINS!' : 'Coins';
+        emoji = segment.coins >= 500 ? '🏆' : '💰';
       } else {
         amount = segment.text;
         label = 'Try Again!';
@@ -803,9 +807,9 @@
       // Show modal with animation
       modal.classList.add('show');
       
-      // Add extra celebration for big wins
-      if (segment.coins >= 300) {
-        createConfetti(); // Extra confetti for big wins
+      // Add extra celebration for big wins or bonus spins
+      if (segment.coins >= 150 || segment.bonusSpin) {
+        createConfetti(); // Extra confetti for big wins or bonus spins
       }
     }
     
@@ -893,10 +897,31 @@
       const modal = document.getElementById('winModal');
       modal.classList.remove('show');
       
-      // Update coins in userVenueProgress document
-      if (actualWonSegment && currentUserId && actualWonSegment.coins > 0) {
+      if (!actualWonSegment || !currentUserId) {
+        actualWonSegment = null;
+        return;
+      }
+
+      const docRef = getUserVenueProgressRef(currentUserId);
+
+      // Check if bonus spin was won
+      if (actualWonSegment.bonusSpin && actualWonSegment.bonusSpin > 0) {
         try {
-          const docRef = getUserVenueProgressRef(currentUserId);
+          await updateDoc(docRef, {
+            spinsAvailable: increment(actualWonSegment.bonusSpin)
+          });
+          // Also update local counter
+          spinsAvailable += actualWonSegment.bonusSpin;
+          updateSpinDisplay();
+          console.log(`✓ Added ${actualWonSegment.bonusSpin} bonus spin(s) to spinsAvailable`);
+        } catch (error) {
+          console.error('Error updating spinsAvailable:', error);
+          alert('Error adding bonus spin. Please try again.');
+        }
+      }
+      // Update coins in userVenueProgress document
+      else if (actualWonSegment.coins > 0) {
+        try {
           await updateDoc(docRef, {
             coins: increment(actualWonSegment.coins)
           });
@@ -905,10 +930,10 @@
           console.error('Error updating coins:', error);
           alert('Error updating coins. Please try again.');
         }
-      } else if (actualWonSegment && actualWonSegment.item) {
+      } else if (actualWonSegment.item) {
         console.log('Free item won - no coins to add');
       } else {
-        console.log('No coins to add (STOP or 0 coins)');
+        console.log('No coins to add');
       }
       
       // Clear the won segment
