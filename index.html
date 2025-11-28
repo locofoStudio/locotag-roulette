@@ -931,13 +931,13 @@
           alert('Error adding bonus spin. Please try again.');
         }
       }
-      // Update coins in userVenueProgress document
+      // Update coin field in userVenueProgress document
       else if (actualWonSegment.coins > 0) {
         try {
           await updateDoc(docRef, {
-            coins: increment(actualWonSegment.coins)
+            coin: increment(actualWonSegment.coins)
           });
-          console.log(`✓ Added ${actualWonSegment.coins} coins to coins field`);
+          console.log(`✓ Added ${actualWonSegment.coins} coins to coin field`);
         } catch (error) {
           console.error('Error updating coins:', error);
           alert('Error updating coins. Please try again.');
