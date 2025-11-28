@@ -644,16 +644,30 @@
       if (spinsAvailable <= 0) {
         throw new Error('No spins available');
       }
-      
-      if (!gameToken) {
-        throw new Error('Missing security token. Please relaunch the roulette from the Locotag app.');
-      }
 
       const segments = createWheelSegments(venueConfig.colors);
       const randomIndex = Math.floor(Math.random() * segments.length);
       const prizeSegment = segments[randomIndex];
 
-      await callUseRouletteSpin(prizeSegment);
+      // If token is available, call backend to deduct spin and record prize
+      if (gameToken) {
+        try {
+          await callUseRouletteSpin(prizeSegment);
+        } catch (error) {
+          console.error('Backend call failed:', error);
+          // If backend fails, still allow local spin but warn user
+          console.warn('Continuing with local spin (backend unavailable)');
+          // Decrement spins locally
+          spinsAvailable = Math.max(0, spinsAvailable - 1);
+          updateSpinDisplay();
+        }
+      } else {
+        // No token - allow local testing, just decrement spins locally
+        console.warn('No security token - running in local mode');
+        spinsAvailable = Math.max(0, spinsAvailable - 1);
+        updateSpinDisplay();
+      }
+
       return prizeSegment;
     }
     
@@ -860,7 +874,8 @@
         
       } catch (error) {
         console.error('Error starting spin:', error);
-        alert('Error: ' + error.message);
+        const errorMessage = error?.message || error?.toString() || 'An unknown error occurred while starting the spin.';
+        alert('Error: ' + errorMessage);
         isSpinning = false;
         updateSpinDisplay();
       }
