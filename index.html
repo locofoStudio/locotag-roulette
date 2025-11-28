@@ -691,12 +691,12 @@
       
       return [
         {text: '80', coins: 80, color: wheelColors.segmentLight, textColor: '#776e65'},
-        {text: '+1 SPIN', coins: 0, bonusSpin: 1, color: wheelColors.accent4, textColor: '#FFFFFF'},
+        {text: '+1\nSPIN', coins: 0, bonusSpin: 1, color: wheelColors.accent4, textColor: '#FFFFFF', multiLine: true},
         {text: '150', coins: 150, color: wheelColors.segment1, textColor: '#FFFFFF'},
         {text: '10', coins: 10, item: 'free_item', color: wheelColors.segment3, textColor: '#FFFFFF'},
         {text: '50', coins: 50, color: wheelColors.segment2, textColor: '#FFFFFF'},
         {text: '20', coins: 20, color: wheelColors.segmentLight, textColor: '#776e65'},
-        {text: 'JACK POT', coins: 500, color: wheelColors.segment3, textColor: '#FFFFFF'},
+        {text: 'JACK\nPOT', coins: 500, color: wheelColors.segment3, textColor: '#FFFFFF', multiLine: true},
         {text: '5', coins: 5, color: wheelColors.segmentLight, textColor: '#776e65'}
       ];
     }
@@ -719,7 +719,7 @@
           fillStyle: seg.color,
           text: seg.text,
           textFillStyle: seg.textColor,
-          textFontSize: seg.text === '∞' ? 36 : 24
+          textFontSize: seg.multiLine ? 16 : 24
         })),
         animation: {
           type: 'spinToStop',
