@@ -349,7 +349,7 @@
   <!-- Firebase SDK -->
   <script type="module">
     import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js';
-    import { getFirestore, doc, getDoc, setDoc, runTransaction, serverTimestamp, increment } from 'https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js';
+    import { getFirestore, doc, getDoc, updateDoc, increment } from 'https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js';
     import { getAuth, signInAnonymously, onAuthStateChanged } from 'https://www.gstatic.com/firebasejs/10.7.1/firebase-auth.js';
     
     // Firebase config
@@ -371,6 +371,9 @@
     const urlParams = new URLSearchParams(window.location.search);
     const venueId = urlParams.get('venue') || urlParams.get('venueId') || 'demo';
     const urlUserId = urlParams.get('uid') || urlParams.get('userId') || null;
+    const gameToken = urlParams.get('token') || urlParams.get('gameToken') || '';
+    const functionsBaseUrl = urlParams.get('functionsBaseUrl') || 'https://asia-east1-locotag.cloudfunctions.net';
+    const useRouletteSpinUrl = `${functionsBaseUrl}/useRouletteSpin`;
     
     // Debug logging
     console.log('URL Parameters:', {
@@ -380,13 +383,16 @@
       uid: urlParams.get('uid'),
       userId: urlParams.get('userId'),
       resolvedVenueId: venueId,
-      resolvedUserId: urlUserId
+      resolvedUserId: urlUserId,
+      hasToken: Boolean(gameToken),
+      functionsBaseUrl
     });
     
     // User state
     let currentUserId = null;
     let spinsAvailable = 0;
     let currentPrize = null; // Store prize to award after spin
+    let actualWonSegment = null; // Store the actual segment the wheel stopped on
     
     // Default Locotag colors
     function getDefaultConfig() {
@@ -465,48 +471,53 @@
         console.log('=== AUTH INITIALIZATION ===');
         console.log('URL userId:', urlUserId);
         
-        // Priority 1: If URL has uid, use it immediately (no need to wait for auth state)
         if (urlUserId) {
           currentUserId = urlUserId;
           console.log('✓ Using authenticated user ID from URL:', currentUserId);
-          console.log('Document will be created as:', `${currentUserId}-${venueId}`);
+          console.log('Document will be checked as:', `${currentUserId}-${venueId}`);
+          
+          // Sign in anonymously just to satisfy Firestore security rules for reads
+          try {
+            if (!auth.currentUser) {
+              await signInAnonymously(auth);
+              console.log('Signed in anonymously to enable Firestore access');
+            }
+          } catch (anonError) {
+            console.warn('Anonymous sign-in failed (reads may fail if rules require auth):', anonError);
+          }
+          
           return currentUserId;
         }
         
         // Priority 2: Wait for auth state from main app or sign in anonymously
-        return new Promise((resolve, reject) => {
-          // Set timeout in case auth state never comes
+        return await new Promise((resolve, reject) => {
           const timeout = setTimeout(() => {
             console.warn('Auth state timeout (2s), falling back to anonymous sign-in');
             signInAnonymously(auth).then(userCredential => {
               currentUserId = userCredential.user.uid;
               console.log('Fallback anonymous user:', currentUserId);
-              console.log('Document will be created as:', `${currentUserId}-${venueId}`);
+              console.log('Document will be checked as:', `${currentUserId}-${venueId}`);
               resolve(currentUserId);
             }).catch(reject);
           }, 2000);
           
-          // Listen for auth state changes
           const unsubscribe = onAuthStateChanged(auth, (user) => {
             clearTimeout(timeout);
-            unsubscribe(); // Stop listening after first event
+            unsubscribe();
             
             console.log('Auth state changed, user:', user ? user.uid : 'null');
             
-            // Use current Firebase Auth user if available
             if (user) {
               currentUserId = user.uid;
               console.log('✓ Using Firebase Auth user:', currentUserId);
-              console.log('Document will be created as:', `${currentUserId}-${venueId}`);
+              console.log('Document will be checked as:', `${currentUserId}-${venueId}`);
               resolve(currentUserId);
-            }
-            // Otherwise sign in anonymously
-            else {
+            } else {
               console.log('No auth user, signing in anonymously...');
               signInAnonymously(auth).then(userCredential => {
                 currentUserId = userCredential.user.uid;
                 console.log('Anonymous user authenticated:', currentUserId);
-                console.log('Document will be created as:', `${currentUserId}-${venueId}`);
+                console.log('Document will be checked as:', `${currentUserId}-${venueId}`);
                 resolve(currentUserId);
               }).catch(reject);
             }
@@ -580,7 +591,51 @@
       document.getElementById('spinBtn').disabled = spinsAvailable <= 0 || isSpinning;
     }
     
-    // Deduct spin and determine prize (atomic transaction)
+    async function callUseRouletteSpin(prizeSegment) {
+      if (!gameToken) {
+        throw new Error('Missing security token. Please relaunch the roulette from the Locotag app.');
+      }
+
+      const prizeCoins = prizeSegment.coins || 0;
+      const payload = {
+        token: gameToken,
+        prizeCoins,
+        prizeType: prizeSegment.item ? 'item' : 'coins',
+        metadata: {
+          label: prizeSegment.text,
+          emoji: prizeSegment.item ? '🎁' : '💰'
+        }
+      };
+
+      const response = await fetch(useRouletteSpinUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+
+      const data = await response.json().catch(() => ({}));
+
+      if (!response.ok || !data.success) {
+        const errorMessage = data.error || 'Unable to complete spin.';
+        throw new Error(errorMessage);
+      }
+
+      if (typeof data.spinsRemaining === 'number') {
+        spinsAvailable = data.spinsRemaining;
+      } else {
+        spinsAvailable = Math.max(0, spinsAvailable - 1);
+      }
+
+      currentPrize = {
+        coins: prizeCoins,
+        segment: prizeSegment
+      };
+
+      updateSpinDisplay();
+      return data;
+    }
+
+    // Deduct spin through Cloud Function and determine prize
     async function useSpinAndGetPrize() {
       if (!currentUserId) {
         throw new Error('User not authenticated');
@@ -590,58 +645,16 @@
         throw new Error('No spins available');
       }
       
-      const progressRef = getUserVenueProgressRef(currentUserId);
-      
-      // Determine prize BEFORE transaction (server-side would be better, but this works for now)
+      if (!gameToken) {
+        throw new Error('Missing security token. Please relaunch the roulette from the Locotag app.');
+      }
+
       const segments = createWheelSegments(venueConfig.colors);
       const randomIndex = Math.floor(Math.random() * segments.length);
       const prizeSegment = segments[randomIndex];
-      const prizeCoins = prizeSegment.coins || 0;
-      
-      try {
-        // Atomic transaction: deduct spin and award coins (both in userVenueProgress)
-        await runTransaction(db, async (transaction) => {
-          const docSnap = await transaction.get(progressRef);
-          
-          // Document must exist (created by main app)
-          if (!docSnap.exists()) {
-            throw new Error('userVenueProgress document does not exist. Please make a purchase or scan a receipt in the main app first.');
-          }
-          
-          const data = docSnap.data();
-          
-          const currentSpins = data.spinsAvailable || 0;
-          
-          if (currentSpins <= 0) {
-            throw new Error('No spins available');
-          }
-          
-          // Calculate new spin count
-          const newSpinsAvailable = currentSpins - 1;
-          
-          // Update document atomically: deduct spin and award coins
-          transaction.update(progressRef, {
-            spinsAvailable: newSpinsAvailable,
-            coinsFromGame: increment(prizeCoins),
-            coin: increment(prizeCoins), // Also increment total coin
-            hasPlayed: true,
-            lastUpdated: serverTimestamp()
-          });
-          
-          // Update local state
-          spinsAvailable = newSpinsAvailable;
-          currentPrize = {
-            coins: prizeCoins,
-            segment: prizeSegment
-          };
-        });
-        
-        updateSpinDisplay();
-        return prizeSegment;
-      } catch (error) {
-        console.error('Error using spin:', error);
-        throw error;
-      }
+
+      await callUseRouletteSpin(prizeSegment);
+      return prizeSegment;
     }
     
     // Wheel segment configuration
@@ -700,18 +713,34 @@
     function onSpinComplete(indicatedSegment) {
       isSpinning = false;
       
-      // Use the prize that was already determined and saved
-      const segment = currentPrize?.segment || indicatedSegment;
+      // Use the actual segment the wheel stopped on (not the pre-selected one)
+      // Winwheel's indicatedSegment only has text/fillStyle, so we need to find
+      // the matching segment from our configuration to get coins/item
+      const segments = createWheelSegments(venueConfig.colors);
+      const actualSegment = segments.find(seg => seg.text === indicatedSegment.text);
+      
+      if (!actualSegment) {
+        console.error('Could not find matching segment for:', indicatedSegment.text);
+        // Fallback to currentPrize if available
+        actualWonSegment = currentPrize?.segment || null;
+      } else {
+        // Store the actual won segment for the collect button
+        actualWonSegment = actualSegment;
+      }
       
       // Small delay to let wheel settle, then show celebration
       setTimeout(() => {
-        // Show win modal with celebration
-        showWinModal(segment);
+        if (actualWonSegment) {
+          // Show win modal with celebration using the actual segment
+          showWinModal(actualWonSegment);
+          
+          // Create confetti
+          createConfetti();
+        } else {
+          console.error('No segment to display');
+        }
         
-        // Create confetti
-        createConfetti();
-        
-        // Clear current prize
+        // Clear current prize (we'll use actualWonSegment instead)
         currentPrize = null;
       }, 300);
       
@@ -838,13 +867,30 @@
     });
     
     // Collect button handler
-    document.getElementById('collectBtn').addEventListener('click', () => {
+    document.getElementById('collectBtn').addEventListener('click', async () => {
       const modal = document.getElementById('winModal');
       modal.classList.remove('show');
       
-      // Prize was already awarded in the transaction when spin was used
-      // This button just closes the modal
-      console.log('Prize collected! Coins already added to account.');
+      // Update coinsFromGame in userVenueProgress document
+      if (actualWonSegment && currentUserId && actualWonSegment.coins > 0) {
+        try {
+          const docRef = getUserVenueProgressRef(currentUserId);
+          await updateDoc(docRef, {
+            coinsFromGame: increment(actualWonSegment.coins)
+          });
+          console.log(`✓ Added ${actualWonSegment.coins} coins to coinsFromGame`);
+        } catch (error) {
+          console.error('Error updating coinsFromGame:', error);
+          alert('Error updating coins. Please try again.');
+        }
+      } else if (actualWonSegment && actualWonSegment.item) {
+        console.log('Free item won - no coins to add');
+      } else {
+        console.log('No coins to add (STOP or 0 coins)');
+      }
+      
+      // Clear the won segment
+      actualWonSegment = null;
     });
     
     // Initialize game
@@ -859,6 +905,17 @@
         
         // Check if userVenueProgress document exists (should be created by main app)
         const docExists = await checkUserVenueProgress();
+        if (!docExists) {
+          document.getElementById('spinBtn').textContent = 'NO SPINS';
+          document.getElementById('spinBtn').disabled = true;
+          alert('No roulette spins found for this venue. Please earn spins in the Locotag app first.');
+          return;
+        }
+        
+        if (!gameToken) {
+          console.warn('No token detected in URL. Backend spin endpoint will reject requests.');
+          alert('Missing security token. Please relaunch this roulette from the Locotag app.');
+        }
         
         // Load venue configuration
         venueConfig = await loadVenueConfig(venueId);
