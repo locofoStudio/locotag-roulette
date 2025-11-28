@@ -646,8 +646,19 @@
       }
 
       const segments = createWheelSegments(venueConfig.colors);
-      const randomIndex = Math.floor(Math.random() * segments.length);
-      const prizeSegment = segments[randomIndex];
+      
+      // Weighted random selection - segments with higher weight are more likely
+      const totalWeight = segments.reduce((sum, seg) => sum + (seg.weight || 1), 0);
+      let random = Math.random() * totalWeight;
+      let prizeSegment = segments[0];
+      
+      for (const seg of segments) {
+        random -= (seg.weight || 1);
+        if (random <= 0) {
+          prizeSegment = seg;
+          break;
+        }
+      }
 
       // Deduct 1 from spinsAvailable in Firestore
       try {
@@ -689,15 +700,16 @@
         segmentDark: venueColors.backgroundDark || '#0F2533'
       };
       
+      // Weight determines probability - higher weight = more likely to land
       return [
-        {text: '80', coins: 80, color: wheelColors.segmentLight, textColor: '#776e65'},
-        {text: '+1\nSPIN', coins: 0, bonusSpin: 1, color: wheelColors.accent4, textColor: '#FFFFFF', multiLine: true},
-        {text: '150', coins: 150, color: wheelColors.segment1, textColor: '#FFFFFF'},
-        {text: '10', coins: 10, item: 'free_item', color: wheelColors.segment3, textColor: '#FFFFFF'},
-        {text: '50', coins: 50, color: wheelColors.segment2, textColor: '#FFFFFF'},
-        {text: '20', coins: 20, color: wheelColors.segmentLight, textColor: '#776e65'},
-        {text: 'JACK\nPOT', coins: 500, color: wheelColors.segment3, textColor: '#FFFFFF', multiLine: true},
-        {text: '5', coins: 5, color: wheelColors.segmentLight, textColor: '#776e65'}
+        {text: '80', coins: 80, color: wheelColors.segmentLight, textColor: '#776e65', weight: 10},
+        {text: '+1\nSPIN', coins: 0, bonusSpin: 1, color: wheelColors.accent4, textColor: '#FFFFFF', multiLine: true, weight: 5},
+        {text: '150', coins: 150, color: wheelColors.segment1, textColor: '#FFFFFF', weight: 6},
+        {text: '10', coins: 10, color: wheelColors.segment3, textColor: '#FFFFFF', weight: 15},
+        {text: '50', coins: 50, color: wheelColors.segment2, textColor: '#FFFFFF', weight: 10},
+        {text: '20', coins: 20, color: wheelColors.segmentLight, textColor: '#776e65', weight: 12},
+        {text: 'JACK\nPOT', coins: 500, color: wheelColors.segment3, textColor: '#FFFFFF', multiLine: true, weight: 1},
+        {text: '5', coins: 5, color: wheelColors.segmentLight, textColor: '#776e65', weight: 20}
       ];
     }
     
