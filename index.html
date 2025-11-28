@@ -649,23 +649,30 @@
       const randomIndex = Math.floor(Math.random() * segments.length);
       const prizeSegment = segments[randomIndex];
 
-      // If token is available, call backend to deduct spin and record prize
+      // Deduct 1 from spinsAvailable in Firestore
+      try {
+        const docRef = getUserVenueProgressRef(currentUserId);
+        await updateDoc(docRef, {
+          spinsAvailable: increment(-1)
+        });
+        console.log('✓ Deducted 1 spin from spinsAvailable in Firestore');
+      } catch (error) {
+        console.error('Failed to deduct spin from Firestore:', error);
+        throw new Error('Failed to deduct spin. Please try again.');
+      }
+
+      // Decrement local counter
+      spinsAvailable = Math.max(0, spinsAvailable - 1);
+      updateSpinDisplay();
+
+      // If token is available, also call backend to record prize
       if (gameToken) {
         try {
           await callUseRouletteSpin(prizeSegment);
         } catch (error) {
           console.error('Backend call failed:', error);
-          // If backend fails, still allow local spin but warn user
-          console.warn('Continuing with local spin (backend unavailable)');
-          // Decrement spins locally
-          spinsAvailable = Math.max(0, spinsAvailable - 1);
-          updateSpinDisplay();
+          console.warn('Spin deducted but backend recording failed');
         }
-      } else {
-        // No token - allow local testing, just decrement spins locally
-        console.warn('No security token - running in local mode');
-        spinsAvailable = Math.max(0, spinsAvailable - 1);
-        updateSpinDisplay();
       }
 
       return prizeSegment;
